@@ -1,0 +1,941 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client"
+  output   = "../app/generated/prisma"
+  binaryTargets = ["native", "debian-openssl-1.1.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ========================================
+// ENUMS
+// ========================================
+
+enum UserRole {
+  admin
+  client_individual
+  client_corporate
+  guest
+}
+
+enum ServiceCategory {
+  personal_consulting
+  corporate_training
+  business_consulting
+}
+
+enum InquiryType {
+  personal_consulting
+  corporate_training
+  business_consulting
+}
+
+enum InquiryStatus {
+  new
+  contacted
+  qualified
+  converted
+  lost
+}
+
+enum Priority {
+  low
+  medium
+  high
+  urgent
+}
+
+enum AppointmentStatus {
+  scheduled
+  confirmed
+  completed
+  cancelled
+  rescheduled
+}
+
+enum ConsultationType {
+  initial
+  follow_up
+  final
+}
+
+enum CorporateEngagementStatus {
+  planning
+  active
+  completed
+  on_hold
+  cancelled
+}
+
+enum TrainingSessionStatus {
+  scheduled
+  confirmed
+  completed
+  cancelled
+}
+
+enum PaymentStatus {
+  pending
+  processing
+  completed
+  failed
+  refunded
+}
+
+enum PaymentMethod {
+  credit_card
+  debit_card
+  bank_transfer
+  upi
+  cash
+  other
+}
+
+enum ActivityType {
+  email
+  call
+  meeting
+  whatsapp
+  other
+}
+
+enum NotificationType {
+  appointment_reminder
+  payment_confirmation
+  inquiry_update
+  general
+}
+
+enum QuizType {
+  style_assessment
+  personal_brand
+  corporate_culture
+  leadership_style
+}
+
+// ========================================
+// CORE ENTITIES
+// ========================================
+
+model User {
+  id                      String   @id @default(uuid())
+  email                   String   @unique
+  password_hash           String?
+  role                    UserRole @default(guest)
+
+  // Personal Information
+  first_name              String
+  last_name               String
+  phone                   String?
+  profile_picture_url     String?
+  date_of_birth           DateTime?
+  gender                  String?
+
+  // Professional Information (Individual)
+  profession              String?
+  linkedin_url            String?
+
+  // Company Information (Corporate)
+  company_name            String?
+  industry                String?
+  company_size            String?
+  job_title               String?
+  department              String?
+
+  // Address
+  address_line1           String?
+  address_line2           String?
+  city                    String?
+  state                   String?
+  country                 String?
+  postal_code             String?
+
+  // Preferences
+  communication_preference String?
+  timezone                String?
+  language_preference     String?  @default("en")
+
+  // Authentication
+  email_verified          Boolean  @default(false)
+  email_verification_token String?
+  password_reset_token    String?
+  password_reset_expires  DateTime?
+  last_login              DateTime?
+
+  // Metadata
+  created_at              DateTime @default(now())
+  updated_at              DateTime @updatedAt
+
+  // Relationships
+  inquiries               Inquiry[]
+  appointments            Appointment[]
+  consultation_notes      ConsultationNote[]
+  corporate_engagements   CorporateEngagement[]
+  payments                Payment[]
+  notifications           Notification[]
+  chatbot_conversations   ChatbotConversation[]
+  quiz_responses          QuizResponse[]
+  newsletter_subscriptions NewsletterSubscriber[]
+  appointment_participants AppointmentParticipant[]
+
+  @@index([email])
+  @@index([role])
+  @@index([created_at(sort: Desc)])
+}
+
+// ========================================
+// SERVICE MANAGEMENT
+// ========================================
+
+model Service {
+  id                String          @id @default(uuid())
+  name              String
+  category          ServiceCategory
+  description       String?
+  short_description String?
+  icon_url          String?
+  is_active         Boolean         @default(true)
+  display_order     Int             @default(0)
+
+  created_at        DateTime        @default(now())
+  updated_at        DateTime        @updatedAt
+
+  // Relationships
+  packages          ServicePackage[]
+
+  @@index([category])
+  @@index([is_active])
+}
+
+model ServicePackage {
+  id                    String   @id @default(uuid())
+  service_id            String
+  name                  String
+  description           String?
+
+  // Pricing
+  base_price            Decimal  @db.Decimal(10, 2)
+  currency              String   @default("INR")
+  discount_percentage   Decimal? @db.Decimal(5, 2)
+
+  // Duration
+  duration_hours        Int?
+  duration_days         Int?
+  session_count         Int?     @default(1)
+
+  // Features (stored as JSONB array)
+  features              Json?    // ["Feature 1", "Feature 2"]
+  deliverables          Json?    // ["Deliverable 1", "Deliverable 2"]
+
+  // Capacity (for group sessions)
+  min_participants      Int?
+  max_participants      Int?
+
+  // Display
+  is_popular            Boolean  @default(false)
+  is_active             Boolean  @default(true)
+  display_order         Int      @default(0)
+
+  created_at            DateTime @default(now())
+  updated_at            DateTime @updatedAt
+
+  // Relationships
+  service               Service  @relation(fields: [service_id], references: [id], onDelete: Cascade)
+  inquiries             Inquiry[]
+  appointments          Appointment[]
+  corporate_engagements CorporateEngagement[]
+
+  @@index([service_id])
+  @@index([is_active])
+}
+
+// ========================================
+// LEAD GENERATION & INQUIRY
+// ========================================
+
+model ChatbotConversation {
+  id                    String   @id @default(uuid())
+  user_id               String?
+  session_id            String   @unique
+
+  // Conversation Data
+  messages              Json     // Array of {role, content, timestamp}
+  extracted_info        Json?    // Key information extracted by AI
+  recommended_services  Json?    // AI-suggested services
+  sentiment_score       Float?
+
+  // Lead Capture
+  lead_email            String?
+  lead_name             String?
+  lead_phone            String?
+  inquiry_created       Boolean  @default(false)
+  inquiry_id            String?
+
+  // Metadata
+  started_at            DateTime @default(now())
+  last_message_at       DateTime @updatedAt
+  ended_at              DateTime?
+
+  // Relationships
+  user                  User?    @relation(fields: [user_id], references: [id], onDelete: SetNull)
+  inquiry               Inquiry? @relation(fields: [inquiry_id], references: [id], onDelete: SetNull)
+
+  @@index([session_id])
+  @@index([user_id])
+  @@index([started_at(sort: Desc)])
+}
+
+model Quiz {
+  id                String      @id @default(uuid())
+  title             String
+  description       String?
+  quiz_type         QuizType
+  questions         Json        // Array of question objects
+  is_active         Boolean     @default(true)
+  display_order     Int         @default(0)
+
+  created_at        DateTime    @default(now())
+  updated_at        DateTime    @updatedAt
+
+  // Relationships
+  responses         QuizResponse[]
+
+  @@index([quiz_type])
+  @@index([is_active])
+}
+
+model QuizResponse {
+  id                String   @id @default(uuid())
+  quiz_id           String
+  user_id           String?
+
+  // Response Data
+  answers           Json     // Array of {question_id, answer}
+  score             Float?
+
+  // AI Analysis
+  ai_analysis       Json?    // Personality profile, insights
+  recommended_services Json? // Services suggested based on responses
+
+  // Lead Capture
+  respondent_email  String?
+  respondent_name   String?
+  inquiry_created   Boolean  @default(false)
+  inquiry_id        String?
+
+  // Metadata
+  completed_at      DateTime @default(now())
+
+  // Relationships
+  quiz              Quiz     @relation(fields: [quiz_id], references: [id], onDelete: Cascade)
+  user              User?    @relation(fields: [user_id], references: [id], onDelete: SetNull)
+  inquiry           Inquiry? @relation(fields: [inquiry_id], references: [id], onDelete: SetNull)
+
+  @@index([quiz_id])
+  @@index([user_id])
+  @@index([completed_at(sort: Desc)])
+}
+
+model Inquiry {
+  id                    String        @id @default(uuid())
+  user_id               String?
+  inquiry_type          InquiryType
+  status                InquiryStatus @default(new)
+  priority              Priority      @default(medium)
+
+  // Contact Information
+  name                  String
+  email                 String
+  phone                 String?
+  company_name          String?
+
+  // Inquiry Details
+  subject               String?
+  message               String
+  preferred_package_id  String?
+  budget_range          String?
+  preferred_date        DateTime?
+  how_heard_about       String?
+
+  // AI Assessment
+  ai_assessment         Json?        // AI-generated insights and recommendations
+
+  // Source Tracking
+  source                String?      // 'website', 'chatbot', 'quiz', 'referral'
+  referral_source       String?
+
+  // Follow-up
+  assigned_to           String?      // Admin user ID
+  next_follow_up_date   DateTime?
+
+  // Conversion
+  converted_at          DateTime?
+  appointment_id        String?
+  engagement_id         String?
+
+  // Metadata
+  created_at            DateTime     @default(now())
+  updated_at            DateTime     @updatedAt
+
+  // Relationships
+  user                  User?        @relation(fields: [user_id], references: [id], onDelete: SetNull)
+  preferred_package     ServicePackage? @relation(fields: [preferred_package_id], references: [id], onDelete: SetNull)
+  activities            InquiryActivity[]
+  chatbot_conversations ChatbotConversation[]
+  quiz_responses        QuizResponse[]
+
+  @@index([user_id])
+  @@index([status])
+  @@index([priority])
+  @@index([inquiry_type])
+  @@index([created_at(sort: Desc)])
+  @@index([email])
+}
+
+model InquiryActivity {
+  id                String       @id @default(uuid())
+  inquiry_id        String
+  activity_type     ActivityType
+
+  // Activity Details
+  subject           String?
+  notes             String
+  performed_by      String?      // Admin user ID/name
+
+  // Follow-up
+  is_follow_up      Boolean      @default(false)
+  next_action       String?
+  next_action_date  DateTime?
+
+  // Metadata
+  created_at        DateTime     @default(now())
+
+  // Relationships
+  inquiry           Inquiry      @relation(fields: [inquiry_id], references: [id], onDelete: Cascade)
+
+  @@index([inquiry_id])
+  @@index([created_at(sort: Desc)])
+}
+
+// ========================================
+// APPOINTMENTS & CONSULTATION
+// ========================================
+
+model Appointment {
+  id                    String              @id @default(uuid())
+  user_id               String
+  package_id            String
+
+  status                AppointmentStatus   @default(scheduled)
+  consultation_type     ConsultationType    @default(initial)
+
+  // Scheduling
+  appointment_date      DateTime
+  appointment_time      String              // Format: "HH:MM"
+  duration_minutes      Int
+  timezone              String?
+
+  // Location
+  location_type         String              // 'online', 'in_person', 'hybrid'
+  location_address      String?
+  meeting_url           String?
+  meeting_platform      String?
+
+  // Details
+  notes                 String?
+  special_requirements  String?
+
+  // Confirmation
+  confirmed_at          DateTime?
+  confirmation_sent     Boolean             @default(false)
+  reminder_sent         Boolean             @default(false)
+
+  // Completion
+  completed_at          DateTime?
+
+  // Group Session
+  is_group_session      Boolean             @default(false)
+  max_participants      Int?
+
+  // Metadata
+  created_at            DateTime            @default(now())
+  updated_at            DateTime            @updatedAt
+
+  // Relationships
+  user                  User                @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  package               ServicePackage      @relation(fields: [package_id], references: [id], onDelete: Restrict)
+  consultation_notes    ConsultationNote[]
+  participants          AppointmentParticipant[]
+  payments              Payment[]
+
+  @@index([user_id])
+  @@index([status])
+  @@index([appointment_date])
+  @@index([created_at(sort: Desc)])
+}
+
+model AppointmentParticipant {
+  id                String      @id @default(uuid())
+  appointment_id    String
+  user_id           String?
+
+  // Participant Info (if not a registered user)
+  name              String
+  email             String?
+  phone             String?
+
+  // Attendance
+  attended          Boolean?
+  feedback          String?
+
+  created_at        DateTime    @default(now())
+
+  // Relationships
+  appointment       Appointment @relation(fields: [appointment_id], references: [id], onDelete: Cascade)
+  user              User?       @relation(fields: [user_id], references: [id], onDelete: SetNull)
+
+  @@index([appointment_id])
+  @@index([user_id])
+}
+
+model ConsultationNote {
+  id                    String      @id @default(uuid())
+  appointment_id        String
+  user_id               String
+  created_by            String      // Admin user ID
+
+  // ABCD Framework
+  attire_recommendations String?
+  behavior_attitude_notes String?
+  communication_analysis String?
+  digital_presence_feedback String?
+
+  // Additional Assessment
+  self_image_assessment String?
+  strengths             String?
+  areas_for_improvement String?
+
+  // Action Items & Resources
+  action_items          Json?       // Array of action item objects
+  resources_shared      Json?       // Array of resource links/documents
+
+  // Follow-up
+  follow_up_required    Boolean     @default(false)
+  follow_up_date        DateTime?
+  follow_up_notes       String?
+
+  // Metadata
+  session_number        Int?
+  overall_notes         String?
+  created_at            DateTime    @default(now())
+  updated_at            DateTime    @updatedAt
+
+  // Relationships
+  appointment           Appointment @relation(fields: [appointment_id], references: [id], onDelete: Cascade)
+  user                  User        @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([appointment_id])
+  @@index([user_id])
+  @@index([created_at(sort: Desc)])
+}
+
+// ========================================
+// CORPORATE ENGAGEMENTS
+// ========================================
+
+model CorporateEngagement {
+  id                    String                      @id @default(uuid())
+  user_id               String                      // Corporate decision maker
+  package_id            String
+
+  // Project Details
+  project_name          String
+  company_name          String
+  industry              String?
+
+  status                CorporateEngagementStatus   @default(planning)
+
+  // Objectives
+  objectives            String
+  challenges            String?
+  expected_outcomes     String?
+
+  // Scope
+  departments           Json?                       // Array of department names
+  hierarchy_levels      Json?                       // Array of levels
+  employee_count        Int?
+  participant_count     Int?
+
+  // Employee Survey
+  survey_data           Json?                       // Survey results
+  survey_completed_at   DateTime?
+
+  // Timeline
+  start_date            DateTime?
+  end_date              DateTime?
+
+  // Budget
+  total_budget          Decimal?                    @db.Decimal(10, 2)
+  currency              String                      @default("INR")
+
+  // Completion
+  completed_at          DateTime?
+  final_report_url      String?
+
+  // Metadata
+  created_at            DateTime                    @default(now())
+  updated_at            DateTime                    @updatedAt
+
+  // Relationships
+  user                  User                        @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  package               ServicePackage              @relation(fields: [package_id], references: [id], onDelete: Restrict)
+  training_sessions     TrainingSession[]
+  payments              Payment[]
+
+  @@index([user_id])
+  @@index([status])
+  @@index([company_name])
+  @@index([created_at(sort: Desc)])
+}
+
+model TrainingSession {
+  id                    String                  @id @default(uuid())
+  engagement_id         String
+
+  // Session Details
+  session_title         String
+  session_number        Int
+  description           String?
+
+  status                TrainingSessionStatus   @default(scheduled)
+
+  // Scheduling
+  session_date          DateTime
+  session_time          String                  // Format: "HH:MM"
+  duration_minutes      Int
+
+  // Location
+  location_type         String                  // 'online', 'in_person', 'hybrid'
+  location_address      String?
+  meeting_url           String?
+
+  // Content
+  topics_covered        Json?                   // Array of topics
+  materials_used        Json?                   // Array of material links
+
+  // Attendance
+  expected_participants Int?
+  actual_participants   Int?
+  attendance_list       Json?                   // Array of participant info
+
+  // Feedback
+  session_feedback      Json?                   // Array of feedback objects
+  trainer_notes         String?
+
+  // Completion
+  completed_at          DateTime?
+
+  // Metadata
+  created_at            DateTime                @default(now())
+  updated_at            DateTime                @updatedAt
+
+  // Relationships
+  engagement            CorporateEngagement     @relation(fields: [engagement_id], references: [id], onDelete: Cascade)
+
+  @@index([engagement_id])
+  @@index([status])
+  @@index([session_date])
+}
+
+// ========================================
+// PAYMENTS & BILLING
+// ========================================
+
+model Payment {
+  id                    String        @id @default(uuid())
+  user_id               String
+
+  // Related Entity (one of these will be set)
+  appointment_id        String?
+  engagement_id         String?
+
+  // Payment Details
+  amount                Decimal       @db.Decimal(10, 2)
+  currency              String        @default("INR")
+  payment_method        PaymentMethod
+  status                PaymentStatus @default(pending)
+
+  // Transaction
+  transaction_id        String?
+  payment_gateway       String?
+  gateway_response      Json?
+
+  // Invoice
+  invoice_number        String?       @unique
+  invoice_url           String?
+  invoice_date          DateTime?
+  due_date              DateTime?
+
+  // Metadata
+  notes                 String?
+  paid_at               DateTime?
+  created_at            DateTime      @default(now())
+  updated_at            DateTime      @updatedAt
+
+  // Relationships
+  user                  User          @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  appointment           Appointment?  @relation(fields: [appointment_id], references: [id], onDelete: SetNull)
+  engagement            CorporateEngagement? @relation(fields: [engagement_id], references: [id], onDelete: SetNull)
+
+  @@index([user_id])
+  @@index([status])
+  @@index([appointment_id])
+  @@index([engagement_id])
+  @@index([created_at(sort: Desc)])
+  @@index([invoice_number])
+}
+
+// ========================================
+// SUCCESS STORIES & TESTIMONIALS
+// ========================================
+
+model SuccessStory {
+  id                    String   @id @default(uuid())
+  user_id               String?
+
+  // Client Info (anonymized if needed)
+  client_name           String
+  client_title          String?
+  client_company        String?
+  client_photo_url      String?
+
+  // Story
+  title                 String
+  challenge             String
+  solution              String
+  results               String
+
+  // Before/After
+  before_image_url      String?
+  after_image_url       String?
+
+  // Metrics
+  metrics               Json?    // Key achievements
+
+  // Publishing
+  is_published          Boolean  @default(false)
+  published_at          DateTime?
+  featured              Boolean  @default(false)
+  display_order         Int      @default(0)
+
+  // Metadata
+  service_category      ServiceCategory?
+  created_at            DateTime @default(now())
+  updated_at            DateTime @updatedAt
+
+  @@index([is_published])
+  @@index([featured])
+  @@index([service_category])
+}
+
+model Testimonial {
+  id                    String   @id @default(uuid())
+  user_id               String?
+
+  // Client Info
+  client_name           String
+  client_title          String?
+  client_company        String?
+  client_photo_url      String?
+
+  // Testimonial
+  content               String
+  rating                Int?     // 1-5
+
+  // Publishing
+  is_published          Boolean  @default(false)
+  published_at          DateTime?
+  featured              Boolean  @default(false)
+  display_order         Int      @default(0)
+
+  // Source
+  service_category      ServiceCategory?
+
+  // Metadata
+  created_at            DateTime @default(now())
+  updated_at            DateTime @updatedAt
+
+  @@index([is_published])
+  @@index([featured])
+  @@index([rating])
+}
+
+// ========================================
+// COMMUNICATION & NOTIFICATIONS
+// ========================================
+
+model Notification {
+  id                String            @id @default(uuid())
+  user_id           String
+
+  type              NotificationType
+  title             String
+  message           String
+
+  // Action Link
+  action_url        String?
+  action_text       String?
+
+  // Status
+  is_read           Boolean           @default(false)
+  read_at           DateTime?
+
+  // Metadata
+  created_at        DateTime          @default(now())
+
+  // Relationships
+  user              User              @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@index([is_read])
+  @@index([created_at(sort: Desc)])
+}
+
+model NewsletterSubscriber {
+  id                String   @id @default(uuid())
+  user_id           String?
+
+  email             String   @unique
+  name              String?
+
+  // Preferences
+  subscribed        Boolean  @default(true)
+  interests         Json?    // Array of interest categories
+
+  // Status
+  verified          Boolean  @default(false)
+  verification_token String?
+
+  // Metadata
+  subscribed_at     DateTime @default(now())
+  unsubscribed_at   DateTime?
+
+  // Relationships
+  user              User?    @relation(fields: [user_id], references: [id], onDelete: SetNull)
+
+  @@index([email])
+  @@index([subscribed])
+}
+
+// ========================================
+// ANALYTICS & TRACKING
+// ========================================
+
+model PageView {
+  id                String   @id @default(uuid())
+
+  // Page Info
+  page_url          String
+  page_title        String?
+  referrer          String?
+
+  // User Info
+  user_id           String?
+  session_id        String?
+  ip_address        String?
+  user_agent        String?
+
+  // Device Info
+  device_type       String?
+  browser           String?
+  os                String?
+
+  // Timing
+  time_on_page      Int?     // seconds
+
+  // Metadata
+  created_at        DateTime @default(now())
+
+  @@index([user_id])
+  @@index([session_id])
+  @@index([page_url])
+  @@index([created_at(sort: Desc)])
+}
+
+// ========================================
+// CONTENT MANAGEMENT
+// ========================================
+
+model BlogPost {
+  id                String   @id @default(uuid())
+
+  // Content
+  title             String
+  slug              String   @unique
+  excerpt           String?
+  content           String
+  featured_image_url String?
+
+  // Author
+  author_name       String
+  author_bio        String?
+  author_photo_url  String?
+
+  // SEO
+  meta_title        String?
+  meta_description  String?
+  meta_keywords     Json?
+
+  // Publishing
+  is_published      Boolean  @default(false)
+  published_at      DateTime?
+  featured          Boolean  @default(false)
+
+  // Categories & Tags
+  category          String?
+  tags              Json?    // Array of tags
+
+  // Engagement
+  view_count        Int      @default(0)
+
+  // Metadata
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  @@index([slug])
+  @@index([is_published])
+  @@index([published_at(sort: Desc)])
+  @@index([category])
+}
+
+model FAQ {
+  id                String   @id @default(uuid())
+
+  question          String
+  answer            String
+  category          String?
+
+  // Display
+  is_active         Boolean  @default(true)
+  display_order     Int      @default(0)
+
+  // Analytics
+  view_count        Int      @default(0)
+  helpful_count     Int      @default(0)
+
+  // Metadata
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  @@index([category])
+  @@index([is_active])
+  @@index([display_order])
+}
